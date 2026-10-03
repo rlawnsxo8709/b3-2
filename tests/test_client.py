@@ -81,3 +81,30 @@ class ErrorTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PayloadParameterTest(unittest.TestCase):
+    """GPT-5 계열은 temperature 변경을 지원하지 않는다 — 지원하는 모델에만 실어 보낸다."""
+
+    def payload_for(self, model, temperature):
+        with StubAPI() as stub:
+            AIClient("k", stub.url).complete(MESSAGES, model=model, temperature=temperature, max_tokens=50)
+            return stub.requests[0]["json"]
+
+    def test_includes_temperature_for_models_that_support_it(self):
+        for model in ("gpt-4o-mini", "claude-sonnet-4", "gemini-3-flash"):
+            self.assertEqual(self.payload_for(model, 0.2)["temperature"], 0.2, model)
+
+    def test_omits_temperature_for_gpt5_family(self):
+        for model in ("gpt-5.5", "gpt-5-mini", "gpt-5.4-mini", "o3-mini"):
+            self.assertNotIn("temperature", self.payload_for(model, 0.2), model)
+
+    def test_keeps_default_temperature_for_gpt5_family(self):
+        # 기본값(1)은 공급자가 받아들이므로 굳이 빼지 않는다
+        self.assertEqual(self.payload_for("gpt-5.5", 1.0)["temperature"], 1.0)
+
+    def test_always_sends_model_messages_and_max_tokens(self):
+        payload = self.payload_for("gpt-5.5", 0.2)
+        self.assertEqual(payload["model"], "gpt-5.5")
+        self.assertEqual(payload["messages"], MESSAGES)
+        self.assertEqual(payload["max_tokens"], 50)

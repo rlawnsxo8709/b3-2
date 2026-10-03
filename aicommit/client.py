@@ -9,8 +9,25 @@ import json
 import urllib.error
 import urllib.request
 
-from .config import DEFAULT_BASE_URL, DEFAULT_TIMEOUT
+from .config import (
+    DEFAULT_BASE_URL,
+    DEFAULT_TIMEOUT,
+    PROVIDER_DEFAULT_TEMPERATURE,
+    supports_custom_temperature,
+)
 from .errors import APIError, AuthError, NetworkError, RateLimitError, ResponseFormatError
+
+
+def build_payload(messages, *, model, temperature, max_tokens):
+    """요청 본문을 만든다.
+
+    GPT-5·o 시리즈는 temperature 변경을 거부하므로, 기본값이 아닐 때는 아예 싣지 않는다.
+    (파라미터를 빼면 공급자 기본값으로 동작한다)
+    """
+    payload = {"model": model, "messages": messages, "max_tokens": max_tokens}
+    if supports_custom_temperature(model) or temperature == PROVIDER_DEFAULT_TEMPERATURE:
+        payload["temperature"] = temperature
+    return payload
 
 
 class AIClient:
@@ -22,12 +39,7 @@ class AIClient:
 
     def complete(self, messages, *, model, temperature, max_tokens):
         """메시지 배열을 보내고 생성된 텍스트를 돌려준다."""
-        payload = {
-            "model": model,
-            "messages": messages,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-        }
+        payload = build_payload(messages, model=model, temperature=temperature, max_tokens=max_tokens)
         request = urllib.request.Request(
             f"{self.base_url}/chat/completions",
             data=json.dumps(payload).encode("utf8"),

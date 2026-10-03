@@ -10,10 +10,12 @@ from .config import (
     DEFAULT_MAX_TOKENS,
     DEFAULT_MODEL,
     DEFAULT_TEMPERATURE,
+    PROVIDER_DEFAULT_TEMPERATURE,
     DEFAULT_TIMEOUT,
     apply_env_file,
     resolve_api_key,
     resolve_base_url,
+    supports_custom_temperature,
 )
 from .errors import AICommitError
 from .gitctx import collect
@@ -114,6 +116,11 @@ def run(args):
         print(render.block("Prompt (system)", messages[0]["content"]))
         print(render.block("Prompt (user)", messages[1]["content"]))
         return 0
+
+    if not supports_custom_temperature(args.model) and args.temperature != PROVIDER_DEFAULT_TEMPERATURE:
+        notice = render.warn if args.temperature != DEFAULT_TEMPERATURE else render.info
+        notice(f"{args.model} 모델은 temperature 변경을 지원하지 않습니다. "
+               f"지정한 {args.temperature} 대신 모델 기본값으로 호출합니다.")
 
     client = AIClient(resolve_api_key(), resolve_base_url(args.base_url), timeout=args.timeout)
     render.info(f"AI API 요청 중... (model={args.model}, temperature={args.temperature}, max_tokens={args.max_tokens})")

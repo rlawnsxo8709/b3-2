@@ -9,7 +9,8 @@
 | 개발 환경 | Python 3.10 이상 (검증: 3.13.11, Linux) |
 | 외부 라이브러리 | **없음** (`urllib.request`로 REST 호출) |
 | API | OpenAI Chat Completions 호환 (`POST {base}/chat/completions`) |
-| 기본 모델 | `gpt-4o-mini` (`--model`로 변경) |
+| 기본 주소 | `https://copa.codyssey.kr/v1` (`--base-url`로 변경) |
+| 기본 모델 | `gpt-5.5` (`--model`로 변경) |
 
 설계 결정은 [PLAN.md](PLAN.md), 과제 목표 답변은 [EXPLAIN.md](EXPLAIN.md)에 있다.
 
@@ -64,14 +65,14 @@ echo 'AI_API_KEY=YOUR_KEY' > .env
 | 환경변수 | 용도 |
 |---|---|
 | `AI_API_KEY` (또는 `OPENAI_API_KEY`) | 인증 키. 없으면 안내 메시지와 함께 종료(코드 1) |
-| `AI_API_BASE_URL` (또는 `OPENAI_BASE_URL`) | 호출 주소. 기본값 `https://api.openai.com/v1` |
+| `AI_API_BASE_URL` (또는 `OPENAI_BASE_URL`) | 호출 주소. 기본값 `https://copa.codyssey.kr/v1` |
 
-OpenAI 호환 게이트웨이를 쓴다면 주소만 바꾸면 된다. 코드 수정은 필요 없다.
+OpenAI 공식 API나 다른 호환 게이트웨이를 쓴다면 주소만 바꾸면 된다. 코드 수정은 필요 없다.
 
 ```bash
-export AI_API_BASE_URL="https://my-gateway.example.com/v1"
+export AI_API_BASE_URL="https://api.openai.com/v1"
 # 또는
-python3 main.py commit --base-url https://my-gateway.example.com/v1
+python3 main.py commit --base-url https://api.openai.com/v1 --model gpt-4o-mini
 ```
 
 ## 명령과 옵션
@@ -83,10 +84,10 @@ python3 main.py pr     [옵션]   # PR 제목·본문 초안 생성
 
 | 옵션 | 기본값 | 설명 |
 |---|---|---|
-| `--model` | `gpt-4o-mini` | 사용할 모델 |
-| `--temperature` | `0.2` | 높을수록 표현이 다양해지고 낮을수록 일관적이다 |
+| `--model` | `gpt-5.5` | 사용할 모델 |
+| `--temperature` | `0.2` | 높을수록 표현이 다양해지고 낮을수록 일관적이다. **모델이 지원할 때만 적용된다**(아래 참고) |
 | `--max-tokens` | `700` | 응답 최대 길이 |
-| `--base-url` | OpenAI | API 주소 |
+| `--base-url` | `https://copa.codyssey.kr/v1` | API 주소 |
 | `--timeout` | `30` | 요청 제한 시간(초) |
 | `--staged` | 꺼짐 | 스테이징된 변경만 사용(`git diff --cached`) |
 | `--no-safe-mode` | — | 마스킹·분량 제한 해제 (기본은 켜짐) |
@@ -101,53 +102,74 @@ python3 main.py pr     [옵션]   # PR 제목·본문 초안 생성
 python3 main.py commit                          # 기본값으로 커밋 메시지 생성
 python3 main.py commit --staged                 # 스테이징한 변경만 요약
 python3 main.py commit --temperature 0.7        # 표현을 더 다양하게
-python3 main.py pr --model gpt-4o --max-tokens 1200
+python3 main.py pr --model claude-sonnet-4 --max-tokens 1200
 python3 main.py commit --dry-run                # 어떤 프롬프트가 나가는지 먼저 확인
 ```
+
+### 모델별 파라미터 제약
+
+GPT-5·o 계열(`gpt-5.5`, `gpt-5-mini`, `o3-mini` 등)은 **`temperature` 변경을 받지 않는다.** 기본값이 아닌 값을 보내면 공급자가 요청을 거부한다.
+그래서 이 도구는 해당 모델에서는 `temperature`를 요청 본문에서 빼고 호출하며, 그 사실을 로그로 알린다.
+
+```
+[INFO] gpt-5.5 모델은 temperature 변경을 지원하지 않습니다. 지정한 0.2 대신 모델 기본값으로 호출합니다.
+```
+
+`--temperature`를 직접 지정했는데 그 모델이 지원하지 않으면 `[WARN]`으로 알린다. Claude·Gemini·GPT-4 계열은 지정한 값이 그대로 적용된다.
 
 ## 출력 예시
 
 ### 커밋 메시지 (`python3 main.py commit`)
 
+아래는 이 저장소에서 실제로 실행한 결과다. (게이트웨이 `copa.codyssey.kr`, 모델 `gpt-5.5`)
+
 ```
-[INFO] Git status 수집 완료: 3개 파일 변경 감지
-[INFO] Git diff 수집 완료: 128줄 (민감정보 마스킹 적용)
-[INFO] AI API 요청 중... (model=gpt-4o-mini, temperature=0.2, max_tokens=700)
+[INFO] Git status 수집 완료: 5개 파일 변경 감지
+[INFO] Git diff 수집 완료: 170줄 (민감정보 마스킹 적용)
+[INFO] gpt-5.5 모델은 temperature 변경을 지원하지 않습니다. 지정한 0.2 대신 모델 기본값으로 호출합니다.
+[INFO] AI API 요청 중... (model=gpt-5.5, temperature=0.2, max_tokens=700)
 [DONE] 커밋 메시지 생성 완료 (API 호출 1회)
 ------------------------------------------------------------
 --- Commit Message ---
-feat: Git 변경 사항 기반 커밋 메시지 자동 생성 기능 추가
+fix: 고정 temperature 모델 요청 실패 방지
 
-- git status/diff 수집 로직 추가 (gitctx.py)
-- 커밋 메시지 프롬프트와 출력 규칙 정의 (prompts.py)
-- 제목 길이·불릿 검증 후 재생성 흐름 적용 (validate.py)
+- aicommit/config.py에서 기본 모델과 기본 API URL을 갱신하고 temperature 지원 여부 판단을 추가
+- aicommit/client.py에서 gpt-5·o 계열에 기본값이 아닌 temperature를 보내지 않도록 payload 생성 분리
+- aicommit/cli.py에서 지원하지 않는 temperature 지정 시 사용자에게 안내 메시지 출력
+- tests/test_client.py와 tests/test_cli_e2e.py에 모델별 temperature 처리 검증 추가
 ------------------------------------------------------------
 ```
 
 ### PR 초안 (`python3 main.py pr`)
 
+같은 변경 사항으로 실행한 실제 결과다.
+
 ```
-[INFO] Git status 수집 완료: 3개 파일 변경 감지
-[INFO] Git diff 수집 완료: 128줄 (민감정보 마스킹 적용)
-[INFO] 현재 브랜치: feature/commit-pr-generator
-[INFO] AI API 요청 중... (model=gpt-4o-mini, temperature=0.2, max_tokens=700)
+[INFO] Git status 수집 완료: 5개 파일 변경 감지
+[INFO] Git diff 수집 완료: 170줄 (민감정보 마스킹 적용)
+[INFO] 현재 브랜치: feature/gateway-model-support
+[INFO] gpt-5.5 모델은 temperature 변경을 지원하지 않습니다. 지정한 0.2 대신 모델 기본값으로 호출합니다.
+[INFO] AI API 요청 중... (model=gpt-5.5, temperature=0.2, max_tokens=700)
 [DONE] PR 초안 생성 완료 (API 호출 1회)
 ------------------------------------------------------------
 --- PR Title ---
-feat: 커밋/PR 자동 생성 기능 추가
+게이트웨이 기본 모델 지원 및 temperature 처리 개선
 ------------------------------------------------------------
 ------------------------------------------------------------
 --- PR Body ---
 ## Why
-- 커밋 메시지와 PR 설명 작성에 시간이 들어 자동 생성 도구가 필요했다.
-
+- 기본 API 엔드포인트와 모델을 게이트웨이 환경에 맞게 변경해야 합니다.
+- GPT-5 및 o 계열 모델은 기본값이 아닌 temperature 파라미터를 거부하므로 요청 실패를 방지해야 합니다.
 ## What
-- git status/diff 결과를 AI 입력 컨텍스트로 전달하는 로직 추가
-- commit/pr 명령과 출력 형식 검증 추가
-
+- 기본 모델을 gpt-5.5로, 기본 base URL을 https://copa.codyssey.kr/v1로 변경했습니다.
+- 모델별 temperature 변경 지원 여부를 판별하는 설정을 추가했습니다.
+- temperature 변경을 지원하지 않는 모델에는 기본값이 아닌 temperature를 요청 본문에서 제외하도록 했습니다.
+- CLI에서 지원하지 않는 temperature 값이 지정된 경우 사용자에게 안내 메시지를 출력하도록 했습니다.
+- client payload 생성 및 CLI E2E 테스트를 추가했습니다.
 ## How to Test
-- export AI_API_KEY="YOUR_KEY"
-- python3 main.py commit 실행 후 제목이 72자 이내인지 확인
+- pytest로 전체 테스트를 실행합니다.
+- gpt-5.5 모델에 temperature 0.3을 지정해 실행했을 때 요청 payload에 temperature가 없는지 확인합니다.
+- gpt-4o-mini 모델에 temperature 0.3을 지정해 실행했을 때 요청 payload에 temperature가 포함되는지 확인합니다.
 ------------------------------------------------------------
 ```
 
@@ -174,7 +196,7 @@ feat: 커밋/PR 자동 생성 기능 추가
 [WARN] 형식 규칙을 만족하지 못했습니다 — ## How to Test 섹션이 없습니다. 직접 보완해 주세요.
 ```
 
-> 위 출력은 형식 그대로의 예시다. 실제 문구는 변경 내용에 따라 달라진다.
+> 생성 문구는 변경 내용과 모델에 따라 달라진다. 형식(제목 1줄, 불릿, 세 섹션)은 검증으로 보장한다.
 
 ## 동작 흐름
 
@@ -305,5 +327,11 @@ python3 -m unittest discover -s tests -t .     # 79개 통과
 
 테스트는 mock 라이브러리를 쓰지 않는다. git은 실제 임시 저장소로, API는 실제 HTTP 스텁 서버로 검증한다.
 
-> **실제 API 호출 검증**: 과제로 받은 키(`sk-cody-…`)는 OpenAI 엔드포인트에서 401을 반환해, 공개 API에 대한 실호출은 아직 확인하지 못했다.
-> 유효한 키 또는 게이트웨이 주소를 받으면 `--base-url`만 지정해 바로 확인할 수 있다.
+**실제 API 호출 검증** — 게이트웨이(`https://copa.codyssey.kr/v1`, 모델 `gpt-5.5`)로 `commit`과 `pr`을 각각 실행해 정상 동작을 확인했다. 위 [출력 예시](#출력-예시)가 그 결과다.
+
+| 확인 항목 | 결과 |
+|---|---|
+| `GET /v1/models` | 사용 가능 모델 11종 확인 (gpt-5.5, gpt-5-mini, claude-*, gemini-* 등) |
+| `commit` 실호출 | API 호출 1회, 제목 72자 이내, 불릿 4개 |
+| `pr` 실호출 | API 호출 1회, 세 섹션 헤더와 섹션별 불릿 충족 |
+| GPT-5 계열 `temperature` | 기본값이 아닌 값 전송 시 공급자 오류 → 요청 본문에서 제외하도록 처리 |
