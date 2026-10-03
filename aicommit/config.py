@@ -9,10 +9,14 @@ from pathlib import Path
 
 from .errors import MissingAPIKey
 
-DEFAULT_MODEL = "gpt-4o-mini"
+DEFAULT_MODEL = "gpt-5.5"
 DEFAULT_TEMPERATURE = 0.2
 DEFAULT_MAX_TOKENS = 700
-DEFAULT_BASE_URL = "https://api.openai.com/v1"
+DEFAULT_BASE_URL = "https://copa.codyssey.kr/v1"
+
+# GPT-5·o 시리즈는 temperature 기본값(1)만 받는다. 다른 값을 보내면 공급자가 요청을 거부한다.
+FIXED_TEMPERATURE_PREFIXES = ("gpt-5", "o1", "o3", "o4")
+PROVIDER_DEFAULT_TEMPERATURE = 1.0
 DEFAULT_TIMEOUT = 30
 DEFAULT_MAX_FILES = 10
 DEFAULT_MAX_LINES = 200
@@ -56,6 +60,11 @@ def resolve_api_key(env=None):
         f"{API_KEY_ENVS[0]} 환경변수가 설정되지 않았습니다.\n"
         f'       예) export {API_KEY_ENVS[0]}="YOUR_KEY"   또는 프로젝트 루트에 .env 파일 작성'
     )
+
+
+def supports_custom_temperature(model):
+    """이 모델이 temperature 변경을 받아들이는가."""
+    return not model.lower().startswith(FIXED_TEMPERATURE_PREFIXES)
 
 
 def resolve_base_url(cli_value=None, env=None):

@@ -191,3 +191,21 @@ class ErrorCaseTest(CliTestBase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ModelCapabilityTest(CliTestBase):
+    def test_warns_and_drops_temperature_for_gpt5_model(self):
+        self.change_file()
+        with StubAPI(responses=[COMMIT_OK]) as stub:
+            result = self.run_cli("commit", "--base-url", stub.url, "--model", "gpt-5.5", "--temperature", "0.3")
+        self.assertNotIn("temperature", stub.requests[0]["json"])
+        self.assertIn("[WARN]", result.stdout)
+        self.assertIn("temperature", result.stdout)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_does_not_warn_for_model_supporting_temperature(self):
+        self.change_file()
+        with StubAPI(responses=[COMMIT_OK]) as stub:
+            result = self.run_cli("commit", "--base-url", stub.url, "--model", "gpt-4o-mini", "--temperature", "0.3")
+        self.assertEqual(stub.requests[0]["json"]["temperature"], 0.3)
+        self.assertNotIn("temperature 변경", result.stdout)
