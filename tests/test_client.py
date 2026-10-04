@@ -79,8 +79,7 @@ class ErrorTest(unittest.TestCase):
             client.complete(MESSAGES, model="m", temperature=0.2, max_tokens=10)
 
 
-if __name__ == "__main__":
-    unittest.main()
+
 
 
 class PayloadParameterTest(unittest.TestCase):
@@ -108,3 +107,79 @@ class PayloadParameterTest(unittest.TestCase):
         self.assertEqual(payload["model"], "gpt-5.5")
         self.assertEqual(payload["messages"], MESSAGES)
         self.assertEqual(payload["max_tokens"], 50)
+
+
+SYSTEM_AND_USER = [
+    {"role": "system", "content": "너는 커밋 메시지를 쓴다."},
+    {"role": "user", "content": "변경 사항"},
+]
+
+
+class AnthropicFormatTest(unittest.TestCase):
+    """api_format="anthropic" — POST {base}/messages, x-api-key 헤더, content 블록 응답."""
+
+    def call(self, model="claude-opus-5-5", temperature=0.2, max_tokens=16000, **stub_kw):
+        stub_kw.setdefault("api_format", "anthropic")
+        with StubAPI(**stub_kw) as stub:
+            client = AIClient("test-key", stub.url, api_format="anthropic")
+            text = client.complete(SYSTEM_AND_USER, model=model, temperature=temperature, max_tokens=max_tokens)
+            return text, stub.requests[0]
+
+    def test_calls_messages_path(self):
+        _, request = self.call()
+        self.assertEqual(request["path"], "/v1/messages")
+
+    def test_sends_api_key_and_version_headers(self):
+        _, request = self.call()
+        headers = {k.lower(): v for k, v in request["headers"].items()}
+        self.assertEqual(headers["x-api-key"], "test-key")
+        self.assertEqual(headers["anthropic-version"], "2023-06-01")
+        self.assertNotIn("authorization", headers)
+
+    def test_moves_system_message_to_top_level(self):
+        _, request = self.call()
+        payload = request["json"]
+        self.assertEqual(payload["system"], "너는 커밋 메시지를 쓴다.")
+        self.assertEqual(payload["messages"], [{"role": "user", "content": "변경 사항"}])
+        self.assertEqual(payload["max_tokens"], 16000)
+
+    def test_returns_only_text_blocks(self):
+        text, _ = self.call(responses=["feat: 응답"])
+        self.assertEqual(text, "feat: 응답")
+
+    def test_current_claude_models_get_no_temperature_and_low_effort(self):
+        # Claude 4.7 이후 세대는 temperature 를 받지 않는다(기본값 1 도 거부) — 사고 깊이는 effort 로 조절한다
+        for model in ("claude-opus-5-5", "claude-sonnet-5-5", "claude-opus-4-7"):
+            for temperature in (0.2, 1.0):
+                _, request = self.call(model=model, temperature=temperature)
+                self.assertNotIn("temperature", request["json"], model)
+                self.assertEqual(request["json"]["output_config"], {"effort": "low"}, model)
+
+    def test_older_claude_models_keep_temperature(self):
+        _, request = self.call(model="claude-haiku-4-5", temperature=0.3)
+        self.assertEqual(request["json"]["temperature"], 0.3)
+        self.assertNotIn("output_config", request["json"])
+
+    def test_refusal_raises_api_error(self):
+        body = '{"content": [], "stop_reason": "refusal", "stop_details": {"category": "cyber"}}'
+        with self.assertRaises(APIError) as ctx:
+            self.call(body=body)
+        self.assertIn("거절", str(ctx.exception))
+
+    def test_max_tokens_without_text_suggests_more_tokens(self):
+        body = '{"content": [{"type": "thinking", "thinking": ""}], "stop_reason": "max_tokens"}'
+        with self.assertRaises(ResponseFormatError) as ctx:
+            self.call(body=body)
+        self.assertIn("--max-tokens", str(ctx.exception))
+
+    def test_missing_content_raises_response_format_error(self):
+        with self.assertRaises(ResponseFormatError):
+            self.call(body='{"choices": []}')
+
+    def test_401_raises_auth_error(self):
+        with self.assertRaises(AuthError):
+            self.call(status=401)
+
+
+if __name__ == "__main__":
+    unittest.main()

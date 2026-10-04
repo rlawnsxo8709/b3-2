@@ -43,6 +43,30 @@ class MaskSecretsTest(unittest.TestCase):
         code = "+def add(a, b):\n+    return a + b"
         self.assertEqual(mask_secrets(code), code)
 
+    def test_camel_case_secret_name(self):
+        self.assert_masked('+const apiKey = "abcd1234efgh5678";', "abcd1234efgh5678")
+
+    def test_quoted_json_key(self):
+        self.assert_masked('+  "password": "hunter2hunter2",', "hunter2hunter2")
+
+    def test_plural_secret_name(self):
+        self.assert_masked("+API_KEYS=abcd1234,efgh5678", "abcd1234,efgh5678")
+
+    def test_header_style_name(self):
+        self.assert_masked("+x-api-key: abcd1234efgh5678", "abcd1234efgh5678")
+
+    def test_names_merely_containing_secret_words_are_untouched(self):
+        # 민감 단어가 이름의 '마지막 단어'일 때만 가린다 — author(auth), monkey(key), max_tokens 는 그대로 둔다
+        code = "\n".join([
+            '+author = "Kim"',
+            '+keyboard_layout = "qwerty"',
+            "+monkey_count = 3",
+            "+token_count = len(tokens)",
+            "+DEFAULT_MAX_TOKENS = 700",
+            '+    payload = {"max_tokens": max_tokens}',
+        ])
+        self.assertEqual(mask_secrets(code), code)
+
 
 class LimitDiffTest(unittest.TestCase):
     def make_diff(self, files, lines_per_file):

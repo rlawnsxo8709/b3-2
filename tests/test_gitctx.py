@@ -57,6 +57,22 @@ class GitContextTest(unittest.TestCase):
         self.assertIn("+print('staged')", ctx.diff)
         self.assertNotIn("y = 2", ctx.diff)
 
+    def test_staged_without_staged_changes_has_no_changes(self):
+        # 수정만 하고 git add 하지 않았다면 --staged 로는 보낼 것이 없다
+        (self.repo / "app.py").write_text("print('unstaged')\n", encoding="utf8")
+        (self.repo / "new.py").write_text("x = 1\n", encoding="utf8")
+        ctx = collect(self.repo, staged=True)
+        self.assertFalse(ctx.has_changes)
+        self.assertEqual(ctx.changed_files, [])
+
+    def test_staged_lists_only_staged_files(self):
+        (self.repo / "app.py").write_text("print('staged')\n", encoding="utf8")
+        git(self.repo, "add", "app.py")
+        (self.repo / "new.py").write_text("x = 1\n", encoding="utf8")
+        ctx = collect(self.repo, staged=True)
+        self.assertEqual(ctx.changed_files, ["app.py"])
+        self.assertEqual(ctx.untracked_files, [])
+
     def test_default_includes_unstaged_changes(self):
         (self.repo / "app.py").write_text("print('unstaged')\n", encoding="utf8")
         self.assertIn("+print('unstaged')", collect(self.repo).diff)

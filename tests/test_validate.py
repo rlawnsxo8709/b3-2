@@ -72,6 +72,11 @@ class ValidateCommitTest(unittest.TestCase):
         self.assertLessEqual(len(fixed.title), COMMIT_TITLE_MAX)
         self.assertEqual(validate_commit(fixed), [])
 
+    def test_fix_truncates_at_word_boundary(self):
+        fixed = fix_commit(parse_commit("feat: " + "아주 긴 제목 " * 15))
+        self.assertLessEqual(len(fixed.title), COMMIT_TITLE_MAX)
+        self.assertTrue(fixed.title.endswith("제목"), fixed.title)
+
 
 class ParsePrTest(unittest.TestCase):
     def test_parses_title_and_body(self):

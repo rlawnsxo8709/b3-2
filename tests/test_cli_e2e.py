@@ -45,12 +45,13 @@ class CliTestBase(unittest.TestCase):
     def change_file(self, text="print('changed')\n"):
         (self.repo / "app.py").write_text(text, encoding="utf8")
 
-    def run_cli(self, *args, key="test-key", cwd=None):
+    def run_cli(self, *args, key="test-key", cwd=None, extra_env=None):
         env = {**os.environ, "PYTHONPATH": str(PROJECT_ROOT)}
-        env.pop("AI_API_KEY", None)
-        env.pop("OPENAI_API_KEY", None)
+        for name in ("AI_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "AI_API_FORMAT", "AI_API_BASE_URL"):
+            env.pop(name, None)
         if key is not None:
             env["AI_API_KEY"] = key
+        env.update(extra_env or {})
         return subprocess.run(
             [sys.executable, MAIN, *args],
             cwd=str(cwd or self.repo), env=env, capture_output=True, text=True,
@@ -189,8 +190,6 @@ class ErrorCaseTest(CliTestBase):
         self.assertEqual(stub.requests[0]["headers"]["Authorization"], "Bearer from-env-file")
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class ModelCapabilityTest(CliTestBase):
@@ -209,3 +208,92 @@ class ModelCapabilityTest(CliTestBase):
             result = self.run_cli("commit", "--base-url", stub.url, "--model", "gpt-4o-mini", "--temperature", "0.3")
         self.assertEqual(stub.requests[0]["json"]["temperature"], 0.3)
         self.assertNotIn("temperature 변경", result.stdout)
+
+
+class StagedOptionTest(CliTestBase):
+    def test_staged_without_staged_changes_does_not_call_api(self):
+        self.change_file()  # 수정만 하고 git add 는 하지 않았다
+        with StubAPI(responses=[COMMIT_OK]) as stub:
+            result = self.run_cli("commit", "--staged", "--base-url", stub.url)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(stub.call_count, 0)
+        self.assertIn("스테이징된 변경 사항이 없습니다", result.stdout)
+        self.assertIn("git add", result.stdout)
+
+    def test_staged_sends_only_staged_files(self):
+        self.change_file()
+        git(self.repo, "add", "app.py")
+        (self.repo / "extra.py").write_text("x = 1\n", encoding="utf8")
+        with StubAPI(responses=[COMMIT_OK]) as stub:
+            result = self.run_cli("commit", "--staged", "--base-url", stub.url)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        prompt = stub.requests[0]["json"]["messages"][1]["content"]
+        self.assertIn("app.py", prompt)
+        self.assertNotIn("extra.py", prompt)
+
+
+class AnthropicFormatCliTest(CliTestBase):
+    def test_anthropic_format_uses_messages_api_and_claude_defaults(self):
+        self.change_file()
+        with StubAPI(responses=[COMMIT_OK], api_format="anthropic") as stub:
+            result = self.run_cli("commit", "--api-format", "anthropic", "--base-url", stub.url)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        request = stub.requests[0]
+        self.assertEqual(request["path"], "/v1/messages")
+        self.assertEqual(request["json"]["model"], "claude-opus-4-8")
+        self.assertEqual(request["json"]["max_tokens"], 16000)
+        self.assertNotIn("temperature", request["json"])
+        self.assertIn("feat: 변경 사항 요약 기능 추가", result.stdout)
+        self.assertIn("format=anthropic", result.stdout)
+
+    def test_env_file_can_select_anthropic_format(self):
+        self.change_file()
+        (self.repo / ".env").write_text("AI_API_KEY=from-env-file\nAI_API_FORMAT=anthropic\n", encoding="utf8")
+        with StubAPI(responses=[PR_OK], api_format="anthropic") as stub:
+            result = self.run_cli("pr", "--base-url", stub.url, key=None)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        headers = {k.lower(): v for k, v in stub.requests[0]["headers"].items()}
+        self.assertEqual(headers["x-api-key"], "from-env-file")
+        self.assertIn("## How to Test", result.stdout)
+
+    def test_anthropic_api_key_env_is_accepted(self):
+        self.change_file()
+        with StubAPI(responses=[COMMIT_OK], api_format="anthropic") as stub:
+            result = self.run_cli("commit", "--api-format", "anthropic", "--base-url", stub.url,
+                                  key=None, extra_env={"ANTHROPIC_API_KEY": "anthropic-key"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        headers = {k.lower(): v for k, v in stub.requests[0]["headers"].items()}
+        self.assertEqual(headers["x-api-key"], "anthropic-key")
+
+    def test_retry_keeps_system_prompt_and_alternating_roles(self):
+        self.change_file()
+        with StubAPI(responses=["feat: " + "가" * 100, COMMIT_OK], api_format="anthropic") as stub:
+            result = self.run_cli("commit", "--api-format", "anthropic", "--base-url", stub.url)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        retry = stub.requests[1]["json"]
+        self.assertIn("커밋 메시지", retry["system"])
+        self.assertEqual([m["role"] for m in retry["messages"]], ["user", "assistant", "user"])
+
+    def test_invalid_format_value_exits_one(self):
+        self.change_file()
+        result = self.run_cli("commit", extra_env={"AI_API_FORMAT": "gemini"})
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("AI_API_FORMAT", result.stdout + result.stderr)
+
+
+class OptionValidationTest(CliTestBase):
+    def test_rejects_non_positive_limits(self):
+        for option in ("--max-lines", "--max-files", "--max-tokens", "--timeout"):
+            result = self.run_cli("commit", option, "0", "--dry-run")
+            self.assertNotEqual(result.returncode, 0, option)
+            self.assertIn("1 이상", result.stderr, option)
+
+    def test_does_not_claim_to_send_omitted_temperature(self):
+        self.change_file()
+        with StubAPI(responses=[COMMIT_OK]) as stub:
+            result = self.run_cli("commit", "--base-url", stub.url, "--model", "gpt-5.5")
+        self.assertIn("temperature=모델 기본값", result.stdout)
+
+
+if __name__ == "__main__":
+    unittest.main()
