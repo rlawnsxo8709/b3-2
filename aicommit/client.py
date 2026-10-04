@@ -68,6 +68,7 @@ class AIClient:
         self.timeout = timeout
         self.api_format = api_format
         self.calls = 0
+        self.truncated = False  # 직전 응답이 max_tokens 에 걸려 중간에 잘렸는가
 
     def _request(self, messages, *, model, temperature, max_tokens):
         """형식에 맞는 (경로, 헤더, 본문)을 만든다."""
@@ -101,9 +102,9 @@ class AIClient:
         except urllib.error.URLError as exc:
             raise NetworkError(f"API 서버에 연결하지 못했습니다: {exc.reason}") from exc
 
-        if self.api_format == "anthropic":
-            return self._extract_anthropic_content(raw)
-        return self._extract_content(raw)
+        extract = self._extract_anthropic_content if self.api_format == "anthropic" else self._extract_content
+        text, self.truncated = extract(raw)
+        return text
 
     def _http_error(self, exc):
         detail = ""
@@ -131,15 +132,17 @@ class AIClient:
 
     @classmethod
     def _extract_content(cls, raw):
+        """(텍스트, 잘림 여부). finish_reason 이 length 면 max_tokens 에 걸려 잘린 것이다."""
         body = cls._load_json(raw)
         try:
-            return body["choices"][0]["message"]["content"].strip()
+            choice = body["choices"][0]
+            return choice["message"]["content"].strip(), choice.get("finish_reason") == "length"
         except (KeyError, IndexError, TypeError, AttributeError) as exc:
             raise ResponseFormatError("API 응답에서 생성 결과를 찾지 못했습니다.") from exc
 
     @classmethod
     def _extract_anthropic_content(cls, raw):
-        """content 블록 중 text 만 모은다. thinking 블록은 사용자에게 보여줄 결과가 아니다."""
+        """(텍스트, 잘림 여부). content 블록 중 text 만 모은다 — thinking 블록은 보여줄 결과가 아니다."""
         body = cls._load_json(raw)
         if not isinstance(body, dict) or not isinstance(body.get("content"), list):
             raise ResponseFormatError("API 응답에서 생성 결과를 찾지 못했습니다.")
@@ -158,4 +161,4 @@ class AIClient:
             raise ResponseFormatError("응답이 max_tokens 에 걸려 결과가 비었습니다. --max-tokens 를 늘려 주세요.")
         if not text:
             raise ResponseFormatError("API 응답에서 생성 결과를 찾지 못했습니다.")
-        return text
+        return text, stop_reason == "max_tokens"
