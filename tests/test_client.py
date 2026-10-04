@@ -12,7 +12,7 @@ MESSAGES = [{"role": "user", "content": "안녕"}]
 class RequestTest(unittest.TestCase):
     def test_sends_model_and_parameters(self):
         with StubAPI() as stub:
-            AIClient("test-key", stub.url).complete(MESSAGES, model="gpt-4o-mini", temperature=0.3, max_tokens=500)
+            AIClient("test-key", stub.url, api_format="openai").complete(MESSAGES, model="gpt-4o-mini", temperature=0.3, max_tokens=500)
             sent = stub.requests[0]["json"]
             self.assertEqual(sent["model"], "gpt-4o-mini")
             self.assertEqual(sent["temperature"], 0.3)
@@ -21,22 +21,29 @@ class RequestTest(unittest.TestCase):
 
     def test_sends_bearer_authorization_header(self):
         with StubAPI() as stub:
-            AIClient("test-key", stub.url).complete(MESSAGES, model="m", temperature=0.2, max_tokens=10)
+            AIClient("test-key", stub.url, api_format="openai").complete(MESSAGES, model="m", temperature=0.2, max_tokens=10)
             self.assertEqual(stub.requests[0]["headers"]["Authorization"], "Bearer test-key")
 
     def test_calls_chat_completions_path(self):
         with StubAPI() as stub:
-            AIClient("test-key", stub.url).complete(MESSAGES, model="m", temperature=0.2, max_tokens=10)
+            AIClient("test-key", stub.url, api_format="openai").complete(MESSAGES, model="m", temperature=0.2, max_tokens=10)
             self.assertEqual(stub.requests[0]["path"], "/v1/chat/completions")
 
     def test_returns_message_content(self):
         with StubAPI(responses=["feat: 결과 텍스트"]) as stub:
-            text = AIClient("k", stub.url).complete(MESSAGES, model="m", temperature=0.2, max_tokens=10)
+            text = AIClient("k", stub.url, api_format="openai").complete(MESSAGES, model="m", temperature=0.2, max_tokens=10)
             self.assertEqual(text, "feat: 결과 텍스트")
+
+    def test_flags_truncated_response_by_finish_reason(self):
+        body = '{"choices": [{"message": {"content": "feat: 잘린 제"}, "finish_reason": "length"}]}'
+        with StubAPI(body=body) as stub:
+            client = AIClient("k", stub.url, api_format="openai")
+            client.complete(MESSAGES, model="m", temperature=0.2, max_tokens=5)
+            self.assertTrue(client.truncated)
 
     def test_counts_calls(self):
         with StubAPI() as stub:
-            client = AIClient("k", stub.url)
+            client = AIClient("k", stub.url, api_format="openai")
             client.complete(MESSAGES, model="m", temperature=0.2, max_tokens=10)
             client.complete(MESSAGES, model="m", temperature=0.2, max_tokens=10)
             self.assertEqual(client.calls, 2)
@@ -45,7 +52,7 @@ class RequestTest(unittest.TestCase):
 class ErrorTest(unittest.TestCase):
     def call(self, **stub_kwargs):
         with StubAPI(**stub_kwargs) as stub:
-            AIClient("k", stub.url, timeout=1).complete(MESSAGES, model="m", temperature=0.2, max_tokens=10)
+            AIClient("k", stub.url, timeout=1, api_format="openai").complete(MESSAGES, model="m", temperature=0.2, max_tokens=10)
 
     def test_401_raises_auth_error(self):
         with self.assertRaises(AuthError) as cm:
@@ -74,7 +81,7 @@ class ErrorTest(unittest.TestCase):
             self.call(delay=2.0)
 
     def test_unreachable_host_raises_network_error(self):
-        client = AIClient("k", "http://127.0.0.1:1/v1", timeout=1)
+        client = AIClient("k", "http://127.0.0.1:1/v1", timeout=1, api_format="openai")
         with self.assertRaises(NetworkError):
             client.complete(MESSAGES, model="m", temperature=0.2, max_tokens=10)
 
@@ -87,7 +94,7 @@ class PayloadParameterTest(unittest.TestCase):
 
     def payload_for(self, model, temperature):
         with StubAPI() as stub:
-            AIClient("k", stub.url).complete(MESSAGES, model=model, temperature=temperature, max_tokens=50)
+            AIClient("k", stub.url, api_format="openai").complete(MESSAGES, model=model, temperature=temperature, max_tokens=50)
             return stub.requests[0]["json"]
 
     def test_includes_temperature_for_models_that_support_it(self):
@@ -171,6 +178,20 @@ class AnthropicFormatTest(unittest.TestCase):
         with self.assertRaises(ResponseFormatError) as ctx:
             self.call(body=body)
         self.assertIn("--max-tokens", str(ctx.exception))
+
+    def test_flags_truncated_response(self):
+        body = '{"content": [{"type": "text", "text": "feat: 잘린 제"}], "stop_reason": "max_tokens"}'
+        with StubAPI(body=body) as stub:
+            client = AIClient("k", stub.url, api_format="anthropic")
+            self.assertEqual(client.complete(SYSTEM_AND_USER, model="claude-sonnet-4", temperature=0.2, max_tokens=5),
+                             "feat: 잘린 제")
+            self.assertTrue(client.truncated)
+
+    def test_complete_response_is_not_truncated(self):
+        with StubAPI(api_format="anthropic") as stub:
+            client = AIClient("k", stub.url, api_format="anthropic")
+            client.complete(SYSTEM_AND_USER, model="claude-sonnet-4", temperature=0.2, max_tokens=100)
+            self.assertFalse(client.truncated)
 
     def test_missing_content_raises_response_format_error(self):
         with self.assertRaises(ResponseFormatError):

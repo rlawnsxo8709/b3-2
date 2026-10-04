@@ -11,15 +11,19 @@ from .errors import AICommitError, MissingAPIKey
 
 # 요청 형식 — openai: POST {base}/chat/completions / anthropic: POST {base}/messages (Messages API)
 API_FORMATS = ("openai", "anthropic")
-DEFAULT_API_FORMAT = "openai"
+DEFAULT_API_FORMAT = "anthropic"
 API_FORMAT_ENV = "AI_API_FORMAT"
 
-# 형식별 기본값. anthropic 기본 모델은 기본 게이트웨이가 제공하는 Claude 중 가장 상위 모델이다
-# (Anthropic 공식 API 를 쓰면 --model claude-opus-5-5 처럼 최신 모델을 지정한다).
+# 형식별 기본값. anthropic 기본 모델은 --temperature 가 실제로 적용되는 claude-sonnet-4 다
+# (claude-opus-4-7/4-8 은 temperature 를 지원하지 않아 게이트웨이가 값을 무시한다).
+# Anthropic 공식 API 를 쓰면 --model claude-opus-5-5 처럼 최신 모델을 지정한다.
 # Claude 최신 모델은 사고(thinking) 토큰도 max_tokens 에 포함되므로 넉넉히 둔다
-DEFAULT_MODELS = {"openai": "gpt-5.5", "anthropic": "claude-opus-4-8"}
-DEFAULT_MAX_TOKENS = {"openai": 700, "anthropic": 16000}
+DEFAULT_MODELS = {"openai": "gpt-5.5", "anthropic": "claude-sonnet-4"}
+# max_tokens 는 상한이다(실제 생성한 만큼만 과금). 실측한 출력 최대는 commit 268 · pr 1159 토큰이었다(README 참고)
+DEFAULT_MAX_TOKENS = {"openai": 2000, "anthropic": 16000}
 DEFAULT_TEMPERATURE = 0.2
+# 형식별 temperature 허용 범위 — 밖이면 공급자가 400 으로 거부하므로 호출 전에 막는다
+TEMPERATURE_RANGES = {"openai": (0.0, 2.0), "anthropic": (0.0, 1.0)}
 DEFAULT_BASE_URL = "https://copa.codyssey.kr/v1"
 
 # GPT-5·o 시리즈는 temperature 기본값(1)만 받는다. 다른 값을 보내면 공급자가 요청을 거부한다.
@@ -76,6 +80,13 @@ def resolve_api_format(cli_value=None, env=None):
             f"{API_FORMAT_ENV} 값 '{value}' 을(를) 알 수 없습니다. {' 또는 '.join(API_FORMATS)} 중 하나를 써 주세요."
         )
     return value
+
+
+def check_temperature(api_format, temperature):
+    """형식별 허용 범위를 벗어나면 API 를 부르기 전에 사용 오류로 알린다."""
+    low, high = TEMPERATURE_RANGES[api_format]
+    if not low <= temperature <= high:
+        raise AICommitError(f"{api_format} 형식의 temperature 는 {low}~{high} 범위여야 합니다. (지정: {temperature})")
 
 
 def resolve_api_key(api_format=DEFAULT_API_FORMAT, env=None):

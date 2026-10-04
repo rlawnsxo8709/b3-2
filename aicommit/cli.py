@@ -1,12 +1,14 @@
 """CLI 진입점 — 수집 → 마스킹 → 호출 → 검증 → 출력 흐름을 조립한다."""
 
 import argparse
+import sys
 
 from . import render
 from .client import AIClient
 from .config import (
     API_FORMAT_ENV,
     API_FORMATS,
+    DEFAULT_API_FORMAT,
     DEFAULT_BASE_URL,
     DEFAULT_MAX_FILES,
     DEFAULT_MAX_LINES,
@@ -16,6 +18,7 @@ from .config import (
     PROVIDER_DEFAULT_TEMPERATURE,
     DEFAULT_TIMEOUT,
     apply_env_file,
+    check_temperature,
     resolve_api_format,
     resolve_api_key,
     resolve_base_url,
@@ -51,18 +54,26 @@ def _per_format(values):
     return " / ".join(f"{name} {values[name]}" for name in API_FORMATS)
 
 
+class _ArgumentParser(argparse.ArgumentParser):
+    """잘못된 옵션은 사용 오류다 — argparse 기본 종료 코드(2) 대신 1 을 쓴다. 2 는 API 오류로 남겨 둔다."""
+
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        self.exit(1, f"{self.prog}: error: {message}\n")
+
+
 def build_parser():
-    parser = argparse.ArgumentParser(
+    parser = _ArgumentParser(
         prog="aicommit",
         description="Git 변경 사항을 AI API 로 보내 커밋 메시지와 PR 초안을 생성한다.",
     )
     parser.add_argument("command", choices=("commit", "pr"), help="commit: 커밋 메시지 / pr: PR 제목·본문")
     parser.add_argument("--api-format", choices=API_FORMATS, default=None,
                         help=f"요청 형식 — openai: /chat/completions, anthropic: /messages "
-                             f"(기본 openai, 환경변수 {API_FORMAT_ENV})")
+                             f"(기본 {DEFAULT_API_FORMAT}, 환경변수 {API_FORMAT_ENV})")
     parser.add_argument("--model", default=None, help=f"사용할 모델 (기본 {_per_format(DEFAULT_MODELS)})")
     parser.add_argument("--temperature", type=float, default=DEFAULT_TEMPERATURE,
-                        help=f"다양성 조절 0.0~2.0 (기본 {DEFAULT_TEMPERATURE})")
+                        help=f"다양성 조절 — openai 0.0~2.0 / anthropic 0.0~1.0 (기본 {DEFAULT_TEMPERATURE})")
     parser.add_argument("--max-tokens", type=_positive_int, default=None,
                         help=f"응답 최대 토큰 (기본 {_per_format(DEFAULT_MAX_TOKENS)})")
     parser.add_argument("--base-url", default=None,
@@ -82,13 +93,23 @@ def build_parser():
     return parser
 
 
+def _warn_if_truncated(client, args):
+    """응답이 max_tokens 에 걸려 잘렸으면 알린다. 잘린 결과도 형식 검증은 통과할 수 있어서 따로 확인한다."""
+    if client.truncated:
+        render.warn(f"응답이 max_tokens({args.max_tokens})에 걸려 중간에 잘렸습니다. "
+                    f"--max-tokens 를 늘려 다시 실행해 주세요.")
+    return client.truncated
+
+
 def _generate(client, messages, args, parse, validate, fix):
     """1회 호출 → 검증 → (필요하면) 1회 재생성 → 후처리. 남은 위반을 함께 돌려준다."""
     text = client.complete(messages, model=args.model, temperature=args.temperature, max_tokens=args.max_tokens)
     result = parse(text)
     violations = validate(result)
+    # 잘린 응답은 같은 max_tokens 로 다시 만들어도 또 잘리므로 재생성하지 않는다 (호출만 낭비된다)
+    truncated = _warn_if_truncated(client, args)
 
-    if violations and args.retry:
+    if violations and args.retry and not truncated:
         render.warn("형식 규칙 위반을 발견해 한 번 더 생성합니다: " + "; ".join(violations))
         retry_messages = messages + [
             {"role": "assistant", "content": text},
@@ -98,6 +119,7 @@ def _generate(client, messages, args, parse, validate, fix):
                                max_tokens=args.max_tokens)
         result = parse(text)
         violations = validate(result)
+        _warn_if_truncated(client, args)
 
     fixed = fix(result)
     return fixed, validate(fixed)
@@ -130,6 +152,7 @@ def _resolve_defaults(args):
     args.api_format = resolve_api_format(args.api_format)
     args.model = args.model or DEFAULT_MODELS[args.api_format]
     args.max_tokens = args.max_tokens or DEFAULT_MAX_TOKENS[args.api_format]
+    check_temperature(args.api_format, args.temperature)
 
 
 def run(args):
