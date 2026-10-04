@@ -1,5 +1,6 @@
 """CLI 전체 흐름 — 실제 git 저장소 + 실제 HTTP 스텁 서버로 main.py를 실행한다."""
 
+import json
 import os
 import subprocess
 import sys
@@ -185,7 +186,7 @@ class ErrorCaseTest(CliTestBase):
         self.change_file()
         (self.repo / ".env").write_text("AI_API_KEY=from-env-file\n", encoding="utf8")
         with StubAPI(responses=[COMMIT_OK]) as stub:
-            result = self.run_cli("commit", "--base-url", stub.url, key=None)
+            result = self.run_cli("commit", "--api-format", "openai", "--base-url", stub.url, key=None)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(stub.requests[0]["headers"]["Authorization"], "Bearer from-env-file")
 
@@ -196,7 +197,8 @@ class ModelCapabilityTest(CliTestBase):
     def test_warns_and_drops_temperature_for_gpt5_model(self):
         self.change_file()
         with StubAPI(responses=[COMMIT_OK]) as stub:
-            result = self.run_cli("commit", "--base-url", stub.url, "--model", "gpt-5.5", "--temperature", "0.3")
+            result = self.run_cli("commit", "--api-format", "openai", "--base-url", stub.url,
+                                  "--model", "gpt-5.5", "--temperature", "0.3")
         self.assertNotIn("temperature", stub.requests[0]["json"])
         self.assertIn("[WARN]", result.stdout)
         self.assertIn("temperature", result.stdout)
@@ -205,7 +207,8 @@ class ModelCapabilityTest(CliTestBase):
     def test_does_not_warn_for_model_supporting_temperature(self):
         self.change_file()
         with StubAPI(responses=[COMMIT_OK]) as stub:
-            result = self.run_cli("commit", "--base-url", stub.url, "--model", "gpt-4o-mini", "--temperature", "0.3")
+            result = self.run_cli("commit", "--api-format", "openai", "--base-url", stub.url,
+                                  "--model", "gpt-4o-mini", "--temperature", "0.3")
         self.assertEqual(stub.requests[0]["json"]["temperature"], 0.3)
         self.assertNotIn("temperature 변경", result.stdout)
 
@@ -227,12 +230,34 @@ class StagedOptionTest(CliTestBase):
         with StubAPI(responses=[COMMIT_OK]) as stub:
             result = self.run_cli("commit", "--staged", "--base-url", stub.url)
         self.assertEqual(result.returncode, 0, result.stderr)
-        prompt = stub.requests[0]["json"]["messages"][1]["content"]
+        prompt = next(m["content"] for m in stub.requests[0]["json"]["messages"] if m["role"] == "user")
         self.assertIn("app.py", prompt)
         self.assertNotIn("extra.py", prompt)
 
 
 class AnthropicFormatCliTest(CliTestBase):
+    def test_default_is_anthropic_format_with_claude_sonnet_4(self):
+        # 옵션·환경변수 없이 실행하면 Anthropic 형식 + claude-sonnet-4 로 요청한다
+        self.change_file()
+        with StubAPI(responses=[COMMIT_OK]) as stub:
+            result = self.run_cli("commit", "--base-url", stub.url)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        request = stub.requests[0]
+        headers = {k.lower(): v for k, v in request["headers"].items()}
+        self.assertEqual(request["path"], "/v1/messages")
+        self.assertEqual(request["json"]["model"], "claude-sonnet-4")
+        self.assertEqual(headers["x-api-key"], "test-key")
+
+    def test_openai_format_is_still_available(self):
+        self.change_file()
+        with StubAPI(responses=[COMMIT_OK]) as stub:
+            result = self.run_cli("commit", "--api-format", "openai", "--base-url", stub.url)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(stub.requests[0]["path"], "/v1/chat/completions")
+        self.assertEqual(stub.requests[0]["json"]["model"], "gpt-5.5")
+        # 실측한 PR 출력 최대(1159토큰)보다 넉넉해야 PR 이 잘리지 않는다
+        self.assertEqual(stub.requests[0]["json"]["max_tokens"], 2000)
+
     def test_anthropic_format_uses_messages_api_and_claude_defaults(self):
         self.change_file()
         with StubAPI(responses=[COMMIT_OK], api_format="anthropic") as stub:
@@ -240,11 +265,23 @@ class AnthropicFormatCliTest(CliTestBase):
         self.assertEqual(result.returncode, 0, result.stderr)
         request = stub.requests[0]
         self.assertEqual(request["path"], "/v1/messages")
-        self.assertEqual(request["json"]["model"], "claude-opus-4-8")
+        self.assertEqual(request["json"]["model"], "claude-sonnet-4")
         self.assertEqual(request["json"]["max_tokens"], 16000)
-        self.assertNotIn("temperature", request["json"])
+        # 기본 모델은 temperature 를 실제로 적용하는 모델이다 — 지정한 값이 그대로 전달돼야 한다
+        self.assertEqual(request["json"]["temperature"], 0.2)
+        self.assertNotIn("temperature 변경", result.stdout)
         self.assertIn("feat: 변경 사항 요약 기능 추가", result.stdout)
         self.assertIn("format=anthropic", result.stdout)
+
+    def test_temperature_is_ignored_notice_for_opus_4_8(self):
+        # claude-opus-4-7/4-8 은 temperature 를 지원하지 않는다 — 빼고 보내고 [WARN] 으로 알린다
+        self.change_file()
+        with StubAPI(responses=[COMMIT_OK], api_format="anthropic") as stub:
+            result = self.run_cli("commit", "--api-format", "anthropic", "--base-url", stub.url,
+                                  "--model", "claude-opus-4-8", "--temperature", "0.7")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("temperature", stub.requests[0]["json"])
+        self.assertIn("[WARN]", result.stdout)
 
     def test_env_file_can_select_anthropic_format(self):
         self.change_file()
@@ -282,16 +319,75 @@ class AnthropicFormatCliTest(CliTestBase):
 
 
 class OptionValidationTest(CliTestBase):
+    def test_rejects_temperature_out_of_format_range_before_calling_api(self):
+        # anthropic 형식은 0~1, openai 형식은 0~2 — 범위 밖이면 API 를 부르지 않고 사용 오류(1)로 끝낸다
+        self.change_file()
+        cases = (("anthropic", "1.5"), ("anthropic", "-0.1"), ("openai", "2.5"))
+        for api_format, value in cases:
+            with StubAPI(responses=[COMMIT_OK], api_format=api_format) as stub:
+                result = self.run_cli("commit", "--api-format", api_format, "--base-url", stub.url,
+                                      "--temperature", value)
+            self.assertEqual(result.returncode, 1, (api_format, value))
+            self.assertEqual(stub.call_count, 0, (api_format, value))
+            self.assertIn("temperature", result.stderr, (api_format, value))
+
+    def test_accepts_temperature_within_format_range(self):
+        self.change_file()
+        for api_format, value in (("anthropic", "1.0"), ("openai", "1.5")):
+            with StubAPI(responses=[COMMIT_OK], api_format=api_format) as stub:
+                result = self.run_cli("commit", "--api-format", api_format, "--base-url", stub.url,
+                                      "--model", "claude-sonnet-4" if api_format == "anthropic" else "gpt-4o-mini",
+                                      "--temperature", value)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(stub.requests[0]["json"]["temperature"], float(value))
+
     def test_rejects_non_positive_limits(self):
+        # 잘못된 옵션은 사용 오류(1)다 — 2 는 API 오류용이다
         for option in ("--max-lines", "--max-files", "--max-tokens", "--timeout"):
             result = self.run_cli("commit", option, "0", "--dry-run")
-            self.assertNotEqual(result.returncode, 0, option)
+            self.assertEqual(result.returncode, 1, option)
             self.assertIn("1 이상", result.stderr, option)
+
+    def test_unknown_command_is_usage_error(self):
+        result = self.run_cli("push")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("invalid choice", result.stderr)
+
+
+class TruncationTest(CliTestBase):
+    """max_tokens 에 걸려 잘린 응답 — 형식 검증을 통과해도 경고하고, 재생성으로 호출을 낭비하지 않는다."""
+
+    def test_warns_when_commit_is_cut_but_still_passes_format(self):
+        self.change_file()
+        body = json.dumps({"content": [{"type": "text", "text": "feat: 기능 추가\n\n- app.py 의 출력 문구를 바꾸"}],
+                           "stop_reason": "max_tokens"})
+        with StubAPI(body=body) as stub:
+            result = self.run_cli("commit", "--base-url", stub.url, "--max-tokens", "30")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("max_tokens(30)에 걸려 중간에 잘렸습니다", result.stdout)
+
+    def test_does_not_retry_truncated_response(self):
+        self.change_file()
+        body = json.dumps({"content": [{"type": "text", "text": "TITLE: 기능 추가\nBODY:\n## Why\n- 이유가 길어서 잘"}],
+                           "stop_reason": "max_tokens"})
+        with StubAPI(body=body) as stub:
+            result = self.run_cli("pr", "--base-url", stub.url, "--max-tokens", "40")
+        self.assertEqual(stub.call_count, 1)  # 섹션이 빠졌어도 같은 상한으로는 또 잘리므로 다시 부르지 않는다
+        self.assertIn("잘렸습니다", result.stdout)
+        self.assertIn("## What 섹션이 없습니다", result.stdout)
+
+    def test_openai_finish_reason_length_is_reported(self):
+        self.change_file()
+        body = json.dumps({"choices": [{"message": {"content": "feat: 기능 추가\n\n- app.py 수"},
+                                        "finish_reason": "length"}]})
+        with StubAPI(body=body) as stub:
+            result = self.run_cli("commit", "--api-format", "openai", "--base-url", stub.url)
+        self.assertIn("잘렸습니다", result.stdout)
 
     def test_does_not_claim_to_send_omitted_temperature(self):
         self.change_file()
         with StubAPI(responses=[COMMIT_OK]) as stub:
-            result = self.run_cli("commit", "--base-url", stub.url, "--model", "gpt-5.5")
+            result = self.run_cli("commit", "--api-format", "openai", "--base-url", stub.url, "--model", "gpt-5.5")
         self.assertIn("temperature=모델 기본값", result.stdout)
 
 
