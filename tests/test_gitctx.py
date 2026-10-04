@@ -90,6 +90,18 @@ class GitContextTest(unittest.TestCase):
             with self.assertRaises(NotAGitRepository):
                 collect(Path(plain))
 
+    def test_non_utf8_file_does_not_crash(self):
+        # CP949 로 저장된 파일이 diff 에 섞여도 멈추지 않는다 — 깨진 글자만 �로 바뀌고 나머지는 그대로다
+        legacy = self.repo / "legacy.py"
+        legacy.write_bytes("# 안녕\nx = 1\n".encode("cp949"))
+        git(self.repo, "add", ".")
+        git(self.repo, "commit", "-q", "-m", "legacy")
+        legacy.write_bytes("# 반가워\nx = 2\n".encode("cp949"))
+        ctx = collect(self.repo)
+        self.assertIn("legacy.py", ctx.changed_files)
+        self.assertIn("+x = 2", ctx.diff)
+        self.assertIn("�", ctx.diff)
+
     def test_diff_line_count_is_reported(self):
         (self.repo / "app.py").write_text("print('a')\nprint('b')\n", encoding="utf8")
         ctx = collect(self.repo)

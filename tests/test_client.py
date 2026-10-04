@@ -85,6 +85,17 @@ class ErrorTest(unittest.TestCase):
         with self.assertRaises(NetworkError):
             client.complete(MESSAGES, model="m", temperature=0.2, max_tokens=10)
 
+    def test_connection_closed_without_response_raises_network_error(self):
+        # urllib 은 응답을 읽다가 난 오류를 URLError 로 감싸지 않는다 — RemoteDisconnected 가 그대로 새면 안 된다
+        with self.assertRaises(NetworkError) as cm:
+            self.call(disconnect="no_response")
+        self.assertIn("끊겼", str(cm.exception))
+
+    def test_connection_closed_mid_body_raises_network_error(self):
+        # 본문을 다 받기 전에 끊기면 http.client.IncompleteRead(OSError 가 아님)가 난다
+        with self.assertRaises(NetworkError):
+            self.call(disconnect="partial_body")
+
 
 
 

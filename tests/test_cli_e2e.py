@@ -176,6 +176,22 @@ class ErrorCaseTest(CliTestBase):
         result = self.run_cli("commit", "--base-url", "http://127.0.0.1:1/v1", "--timeout", "2")
         self.assertEqual(result.returncode, 2)
 
+    def test_dropped_connection_exits_two_without_traceback(self):
+        # 응답 도중 끊긴 것도 네트워크 오류(2)다 — traceback 과 Python 기본 종료 코드(1)가 나오면 안 된다
+        self.change_file()
+        with StubAPI(disconnect="no_response") as stub:
+            result = self.run_cli("commit", "--base-url", stub.url)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("[ERROR]", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+
+    def test_non_utf8_file_in_diff_does_not_crash(self):
+        (self.repo / "app.py").write_bytes("# 안녕\n".encode("cp949"))
+        result = self.run_cli("commit", "--dry-run")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertIn("app.py", result.stdout)
+
     def test_outside_git_repository_exits_one(self):
         with tempfile.TemporaryDirectory() as plain:
             result = self.run_cli("commit", cwd=plain)
