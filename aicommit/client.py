@@ -6,6 +6,7 @@
 오류는 원인별 예외로 바꿔서 올려 보낸다. 호출 횟수는 calls 에 쌓인다.
 """
 
+import http.client
 import json
 import urllib.error
 import urllib.request
@@ -101,6 +102,10 @@ class AIClient:
             raise NetworkError(f"API 응답이 {self.timeout}초 안에 오지 않았습니다. 네트워크 상태를 확인해 주세요.") from exc
         except urllib.error.URLError as exc:
             raise NetworkError(f"API 서버에 연결하지 못했습니다: {exc.reason}") from exc
+        except (OSError, http.client.HTTPException) as exc:
+            # urllib 은 요청을 보내는 중 난 오류만 URLError 로 감싼다 — 응답을 읽다가 끊긴 경우는 여기서 잡는다
+            # (OSError 가 위 예외들을 모두 포함하므로 반드시 맨 뒤에 둔다)
+            raise NetworkError(f"API 서버와의 연결이 응답 도중 끊겼습니다: {exc}") from exc
 
         extract = self._extract_anthropic_content if self.api_format == "anthropic" else self._extract_content
         text, self.truncated = extract(raw)
