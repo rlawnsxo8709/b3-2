@@ -12,7 +12,7 @@
 | 기본 주소 | `https://copa.codyssey.kr/v1` (`--base-url`로 변경) |
 | 기본 모델 | `gpt-5.5` (`--model`로 변경) |
 
-설계 결정은 [PLAN.md](PLAN.md), 과제 목표 답변은 [EXPLAIN.md](EXPLAIN.md)에 있다.
+설계 결정은 [PLAN.md](PLAN.md)에 있다.
 
 ---
 
@@ -259,7 +259,7 @@ fix: 고정 temperature 모델 요청 실패 방지
 │   ├── render.py        구분선·헤더 출력
 │   └── errors.py        예외와 종료 코드
 ├── tests/               단위 + E2E 테스트 (표준 unittest)
-├── README.md  PLAN.md  EXPLAIN.md
+├── README.md  PLAN.md
 ```
 
 ## 요구사항 체크리스트

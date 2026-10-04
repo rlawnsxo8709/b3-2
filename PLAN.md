@@ -30,7 +30,6 @@ answers/                     ← 이 폴더가 곧 rlawnsxo8709/b3-2 저장소�
 │   └── errors.py            예외 정의
 ├── tests/                   단위 + E2E 테스트 (표준 unittest)
 ├── README.md                사용 가이드 (설치·환경변수·예시·출력 예시·주의사항)
-├── EXPLAIN.md               과제 목표 5문항 답변
 └── PLAN.md                  이 문서
 ```
 
