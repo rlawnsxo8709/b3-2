@@ -36,6 +36,7 @@ def _run(repo_dir, *args, check=True):
     try:
         result = subprocess.run(
             ["git", *args], cwd=repo_dir, capture_output=True, text=True, encoding="utf8",
+            errors="replace",  # CP949 등 UTF-8 이 아닌 파일이 diff 에 섞여도 멈추지 않는다 — 깨진 글자만 �로 바꾼다
         )
     except FileNotFoundError as exc:  # git 자체가 없는 환경
         raise GitCommandError("git 명령을 찾을 수 없습니다. git 설치 여부를 확인해 주세요.") from exc

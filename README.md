@@ -366,18 +366,18 @@ feat: anthropic 기본 모델을 claude-sonnet-4로 변경
 
 **Git 변경 사항 수집**
 
-- [x] Git 저장소 루트에서 실행 (아니면 안내 후 종료 코드 1) — `aicommit/gitctx.py:67`
-- [x] `git status` 결과로 변경 파일 목록 수집 — `aicommit/gitctx.py:74`
-- [x] `git diff` 결과로 변경 내용 수집 (`--staged` 지원) — `aicommit/gitctx.py:80-85`
+- [x] Git 저장소 루트에서 실행 (아니면 안내 후 종료 코드 1) — `aicommit/gitctx.py:68`
+- [x] `git status` 결과로 변경 파일 목록 수집 — `aicommit/gitctx.py:75`
+- [x] `git diff` 결과로 변경 내용 수집 (`--staged` 지원) — `aicommit/gitctx.py:81-86`
 - [x] 변경 없음 → "변경 사항이 없습니다" 출력 후 종료 — `aicommit/cli.py:131`
 
 **AI API 연동**
 
 - [x] API Key는 환경변수로만 사용, 하드코딩 없음 — `aicommit/config.py:92`
 - [x] 실행 시 API 호출 후 생성 결과를 터미널에 출력 — `aicommit/cli.py:183`
-- [x] 호출 실패 시 원인을 포함한 메시지 (인증/한도/404/네트워크/응답 형식/거절) — `aicommit/client.py:109`
+- [x] 호출 실패 시 원인을 포함한 메시지 (인증/한도/404/네트워크/응답 형식/거절) — `aicommit/client.py:114`
 - [x] 모델·temperature·max_tokens를 CLI 옵션으로 변경 가능, 기본값 존재 — `aicommit/cli.py:74`
-- [x] OpenAI 호환 · Anthropic Messages 두 요청 형식 지원 — `aicommit/client.py:73`
+- [x] OpenAI 호환 · Anthropic Messages 두 요청 형식 지원 — `aicommit/client.py:74`
 
 **커밋 메시지 자동 생성**
 
@@ -414,7 +414,7 @@ feat: anthropic 기본 모델을 claude-sonnet-4로 변경
 ## 검증
 
 ```bash
-python3 -m unittest discover -s tests -t .     # 124개 통과
+python3 -m unittest discover -s tests -t .     # 129개 통과
 python3 -m unittest tests.test_client          # 파일 하나만 (프로젝트 루트에서)
 ```
 
@@ -423,11 +423,11 @@ python3 -m unittest tests.test_client          # 파일 하나만 (프로젝트 
 | 종류 | 검사 대상 |
 |---|---|
 | `test_sanitize.py` | 키·토큰·비밀번호·이메일·개인키 마스킹, camelCase·JSON 키·복수형 이름, 변수명 보존, 민감 단어를 포함만 한 이름(`author`, `max_tokens`) 미변경, 파일/줄 상한 |
-| `test_gitctx.py` | **임시 git 저장소를 실제로 만들어** 변경 없음·수정·추적되지 않은 파일·스테이징(스테이징한 것만, 없으면 변경 없음)·커밋 없는 저장소·비(非)저장소 |
+| `test_gitctx.py` | **임시 git 저장소를 실제로 만들어** 변경 없음·수정·추적되지 않은 파일·스테이징(스테이징한 것만, 없으면 변경 없음)·커밋 없는 저장소·비(非)저장소·UTF-8이 아닌(CP949) 파일 |
 | `test_validate.py` | 제목/본문 파싱, 코드펜스 제거, 길이·섹션·불릿 검증, 후처리(단어 경계에서 자르기), 없는 섹션을 지어내지 않음 |
 | `test_prompts.py` | 변경 파일·diff·브랜치·출력 규칙이 프롬프트에 포함되는지 |
-| `test_client.py` | **로컬 스텁 HTTP 서버**로 요청 파라미터·헤더·경로, 응답 파싱, 401/429/500/잘못된 JSON/타임아웃/연결 실패, 호출 횟수, anthropic 형식(경로·`x-api-key`·system 분리·text 블록만 추출·temperature/effort·거절·max_tokens 소진), 잘림 감지(`stop_reason`/`finish_reason`) |
-| `test_cli_e2e.py` | 실제 git 저장소 + 스텁 서버로 `main.py` 실행 — commit/pr 출력, 파라미터 전달, 재생성, safe-mode, dry-run, 변경 없음, `--staged` 빈 스테이징, Key 없음, 인증 실패, 저장소 아님, `.env` 읽기, 기본 형식(anthropic + `claude-sonnet-4`)·`--api-format openai`·`AI_API_FORMAT`, temperature 범위·숫자 옵션·잘못된 명령(종료 코드 1), 잘림 경고와 재생성 생략 |
+| `test_client.py` | **로컬 스텁 HTTP 서버**로 요청 파라미터·헤더·경로, 응답 파싱, 401/429/500/잘못된 JSON/타임아웃/연결 실패/응답 도중 끊김(응답 없음·본문 중간), 호출 횟수, anthropic 형식(경로·`x-api-key`·system 분리·text 블록만 추출·temperature/effort·거절·max_tokens 소진), 잘림 감지(`stop_reason`/`finish_reason`) |
+| `test_cli_e2e.py` | 실제 git 저장소 + 스텁 서버로 `main.py` 실행 — commit/pr 출력, 파라미터 전달, 재생성, safe-mode, dry-run, 변경 없음, `--staged` 빈 스테이징, Key 없음, 인증 실패, 응답 도중 끊김(종료 코드 2·traceback 없음), CP949 파일 diff, 저장소 아님, `.env` 읽기, 기본 형식(anthropic + `claude-sonnet-4`)·`--api-format openai`·`AI_API_FORMAT`, temperature 범위·숫자 옵션·잘못된 명령(종료 코드 1), 잘림 경고와 재생성 생략 |
 
 테스트는 mock 라이브러리를 쓰지 않는다. git은 실제 임시 저장소로, API는 실제 HTTP 스텁 서버로 검증한다.
 
