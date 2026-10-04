@@ -7,21 +7,38 @@ API Key 는 코드에 두지 않고 환경변수로만 받는다.
 import os
 from pathlib import Path
 
-from .errors import MissingAPIKey
+from .errors import AICommitError, MissingAPIKey
 
-DEFAULT_MODEL = "gpt-5.5"
+# 요청 형식 — openai: POST {base}/chat/completions / anthropic: POST {base}/messages (Messages API)
+API_FORMATS = ("openai", "anthropic")
+DEFAULT_API_FORMAT = "openai"
+API_FORMAT_ENV = "AI_API_FORMAT"
+
+# 형식별 기본값. anthropic 기본 모델은 기본 게이트웨이가 제공하는 Claude 중 가장 상위 모델이다
+# (Anthropic 공식 API 를 쓰면 --model claude-opus-5-5 처럼 최신 모델을 지정한다).
+# Claude 최신 모델은 사고(thinking) 토큰도 max_tokens 에 포함되므로 넉넉히 둔다
+DEFAULT_MODELS = {"openai": "gpt-5.5", "anthropic": "claude-opus-4-8"}
+DEFAULT_MAX_TOKENS = {"openai": 700, "anthropic": 16000}
 DEFAULT_TEMPERATURE = 0.2
-DEFAULT_MAX_TOKENS = 700
 DEFAULT_BASE_URL = "https://copa.codyssey.kr/v1"
 
 # GPT-5·o 시리즈는 temperature 기본값(1)만 받는다. 다른 값을 보내면 공급자가 요청을 거부한다.
 FIXED_TEMPERATURE_PREFIXES = ("gpt-5", "o1", "o3", "o4")
+# Claude 4.7 이후 세대는 temperature 자체를 받지 않는다(기본값도 거부). 사고 깊이는 effort 로 조절한다.
+CURRENT_CLAUDE_PREFIXES = ("claude-opus-5", "claude-opus-4-7", "claude-opus-4-8",
+                           "claude-sonnet-5", "claude-fable", "claude-mythos")
 PROVIDER_DEFAULT_TEMPERATURE = 1.0
+# 커밋 메시지 요약은 단순한 작업이라 깊은 사고가 필요 없다 — 비용과 지연을 줄인다
+ANTHROPIC_EFFORT = "low"
+ANTHROPIC_VERSION = "2023-06-01"
 DEFAULT_TIMEOUT = 30
 DEFAULT_MAX_FILES = 10
 DEFAULT_MAX_LINES = 200
 
-API_KEY_ENVS = ("AI_API_KEY", "OPENAI_API_KEY")
+API_KEY_ENVS = {
+    "openai": ("AI_API_KEY", "OPENAI_API_KEY"),
+    "anthropic": ("AI_API_KEY", "ANTHROPIC_API_KEY"),
+}
 BASE_URL_ENVS = ("AI_API_BASE_URL", "OPENAI_BASE_URL")
 
 
@@ -51,20 +68,43 @@ def apply_env_file(directory="."):
     return applied
 
 
-def resolve_api_key(env=None):
+def resolve_api_format(cli_value=None, env=None):
     env = os.environ if env is None else env
-    for name in API_KEY_ENVS:
+    value = (cli_value or env.get(API_FORMAT_ENV) or DEFAULT_API_FORMAT).strip().lower()
+    if value not in API_FORMATS:
+        raise AICommitError(
+            f"{API_FORMAT_ENV} 값 '{value}' 을(를) 알 수 없습니다. {' 또는 '.join(API_FORMATS)} 중 하나를 써 주세요."
+        )
+    return value
+
+
+def resolve_api_key(api_format=DEFAULT_API_FORMAT, env=None):
+    env = os.environ if env is None else env
+    names = API_KEY_ENVS[api_format]
+    for name in names:
         if env.get(name):
             return env[name]
     raise MissingAPIKey(
-        f"{API_KEY_ENVS[0]} 환경변수가 설정되지 않았습니다.\n"
-        f'       예) export {API_KEY_ENVS[0]}="YOUR_KEY"   또는 프로젝트 루트에 .env 파일 작성'
+        f"{names[0]} 환경변수가 설정되지 않았습니다.\n"
+        f'       예) export {names[0]}="YOUR_KEY"   또는 프로젝트 루트에 .env 파일 작성'
     )
+
+
+def is_current_claude(model):
+    """temperature 대신 effort 로 조절하는 Claude 4.7 이후 세대인가."""
+    return model.lower().startswith(CURRENT_CLAUDE_PREFIXES)
 
 
 def supports_custom_temperature(model):
     """이 모델이 temperature 변경을 받아들이는가."""
-    return not model.lower().startswith(FIXED_TEMPERATURE_PREFIXES)
+    return not (model.lower().startswith(FIXED_TEMPERATURE_PREFIXES) or is_current_claude(model))
+
+
+def sends_temperature(model, temperature):
+    """요청 본문에 temperature 를 실어도 되는가. 빼면 공급자 기본값으로 동작한다."""
+    if supports_custom_temperature(model):
+        return True
+    return temperature == PROVIDER_DEFAULT_TEMPERATURE and not is_current_claude(model)
 
 
 def resolve_base_url(cli_value=None, env=None):

@@ -35,6 +35,17 @@ def _strip_fence(text):
     return match.group(1) if match else text.strip()
 
 
+def _truncate(text, limit):
+    """limit 자 이내로 자른다. 가능하면 단어 중간이 아니라 공백에서 끊는다."""
+    if len(text) <= limit:
+        return text
+    cut = text[:limit]
+    space = cut.rfind(" ")
+    if space > limit // 2:  # 공백이 너무 앞에 있으면 내용이 많이 사라지므로 그냥 자른다
+        cut = cut[:space]
+    return cut.rstrip()
+
+
 def _has_bullet(text):
     return any(line.strip().startswith("- ") for line in text.splitlines())
 
@@ -64,10 +75,7 @@ def validate_commit(message):
 
 def fix_commit(message):
     """고칠 수 있는 위반만 손본다 — 제목 길이."""
-    title = message.title
-    if len(title) > COMMIT_TITLE_MAX:
-        title = title[:COMMIT_TITLE_MAX].rstrip()
-    return CommitMessage(title=title, body=message.body)
+    return CommitMessage(title=_truncate(message.title, COMMIT_TITLE_MAX), body=message.body)
 
 
 def parse_pr(text):
@@ -128,7 +136,4 @@ def validate_pr(pr):
 
 def fix_pr(pr):
     """고칠 수 있는 위반만 손본다 — 제목 길이. 없는 섹션은 지어내지 않는다."""
-    title = pr.title
-    if len(title) > PR_TITLE_MAX:
-        title = title[:PR_TITLE_MAX].rstrip()
-    return PullRequest(title=title, body=pr.body)
+    return PullRequest(title=_truncate(pr.title, PR_TITLE_MAX), body=pr.body)

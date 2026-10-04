@@ -8,9 +8,11 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 class StubAPI:
     """응답을 미리 정해 두고, 받은 요청을 기록하는 작은 서버."""
 
-    def __init__(self, responses=None, status=200, body=None, delay=0.0):
+    def __init__(self, responses=None, status=200, body=None, delay=0.0, api_format="openai"):
         # responses: 호출 순서대로 돌려줄 본문 문자열 목록
+        # api_format: 응답 모양 — openai(choices) / anthropic(content 블록)
         self.responses = list(responses or ["feat: 스텁 응답"])
+        self.api_format = api_format
         self.status = status
         self.raw_body = body
         self.delay = delay
@@ -22,6 +24,16 @@ class StubAPI:
     def url(self):
         host, port = self._server.server_address
         return f"http://127.0.0.1:{port}/v1"
+
+    def success_body(self, content):
+        if self.api_format == "anthropic":
+            return {
+                "type": "message", "role": "assistant", "model": "stub",
+                "content": [{"type": "thinking", "thinking": "", "signature": "sig"},
+                            {"type": "text", "text": content}],
+                "stop_reason": "end_turn", "usage": {"input_tokens": 10, "output_tokens": 32},
+            }
+        return {"choices": [{"message": {"role": "assistant", "content": content}}], "usage": {"total_tokens": 42}}
 
     @property
     def call_count(self):
@@ -47,10 +59,7 @@ class StubAPI:
                 else:
                     index = min(len(stub.requests) - 1, len(stub.responses) - 1)
                     content = stub.responses[index]
-                    body = json.dumps(
-                        {"choices": [{"message": {"role": "assistant", "content": content}}],
-                         "usage": {"total_tokens": 42}}
-                    ).encode("utf8")
+                    body = json.dumps(stub.success_body(content)).encode("utf8")
 
                 try:
                     self.send_response(stub.status)

@@ -10,7 +10,16 @@ import re
 from dataclasses import dataclass
 
 MASK = "***MASKED***"
-SECRET_NAME = r"(?:[A-Za-z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|PWD|CREDENTIAL|AUTH)[A-Za-z0-9_]*)"
+# 민감 단어가 이름의 '마지막 단어'일 때만 비밀값 이름으로 본다.
+#   잡는다  : API_KEY, API_KEYS, db_password, x-api-key, self.secret, apiKey, githubToken, TOKEN2
+#   놔둔다  : author(auth), monkey_count(key), token_count, max_tokens(LLM 파라미터라 tokens 복수형은 제외)
+_SECRET_WORD = "keys?|token|secrets?|passwords?|passwd|pwd|credentials?|auth"
+_SECRET_WORD_CAMEL = "Keys?|Token|Secrets?|Passwords?|Passwd|Pwd|Credentials?|Auth"
+SECRET_NAME = (
+    rf"(?:(?:[A-Za-z0-9]+[_.-])*(?i:{_SECRET_WORD})"   # 구분자(_ . -)로 나뉜 이름
+    rf"|[A-Za-z0-9]*[a-z0-9](?:{_SECRET_WORD_CAMEL})"  # camelCase 이름
+    r")\d*(?![A-Za-z0-9_])"
+)
 
 # 순서대로 적용한다. 개인키 블록처럼 범위가 넓은 것을 먼저 지운다.
 PATTERNS = (
@@ -25,9 +34,10 @@ PATTERNS = (
     (re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}\b"), MASK),
     # Authorization: Bearer <토큰>
     (re.compile(r"(?i)\b(Bearer)\s+[A-Za-z0-9._~+/=-]{8,}"), rf"\1 {MASK}"),
-    # API_KEY=값 / password: "값" — 이름은 남기고 값만 가린다
-    (re.compile(rf"(?im)^(\s*[+-]?\s*{SECRET_NAME}\s*[:=]\s*)\S.*$"), rf"\1{MASK}"),
-    (re.compile(rf"(?i)\b({SECRET_NAME})(\s*[:=]\s*)['\"]?[A-Za-z0-9._~+/=-]{{6,}}['\"]?"), rf"\1\2{MASK}"),
+    # API_KEY=값 / password: "값" / "api_key": "값" — 이름은 남기고 값만 가린다
+    # (대소문자 무시는 SECRET_NAME 안에서만 건다. 전체에 걸면 camelCase 경계가 사라져 monkey 도 잡힌다)
+    (re.compile(rf"(?m)^(\s*[+-]?\s*['\"]?{SECRET_NAME}['\"]?\s*[:=]\s*)\S.*$"), rf"\1{MASK}"),
+    (re.compile(rf"\b({SECRET_NAME}['\"]?)(\s*[:=]\s*)['\"]?[A-Za-z0-9._~+/=-]{{6,}}['\"]?"), rf"\1\2{MASK}"),
     # 이메일
     (re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"), MASK),
 )
