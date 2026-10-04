@@ -5,16 +5,17 @@ import sys
 SEPARATOR = "-" * 60
 
 
+# 로그는 바로 내보낸다 — 출력을 파이프로 받을 때 stderr 의 [ERROR] 가 앞선 로그보다 먼저 찍히지 않게 한다
 def info(text):
-    print(f"[INFO] {text}")
+    print(f"[INFO] {text}", flush=True)
 
 
 def done(text):
-    print(f"[DONE] {text}")
+    print(f"[DONE] {text}", flush=True)
 
 
 def warn(text):
-    print(f"[WARN] {text}")
+    print(f"[WARN] {text}", flush=True)
 
 
 def error(text):

@@ -72,6 +72,9 @@ def collect(repo_dir=None, staged=False):
 
     branch = _run(repo_dir, "branch", "--show-current").stdout.strip() or "HEAD"
     status = _run(repo_dir, "status", "--porcelain").stdout
+    if staged:
+        # 첫 글자(스테이징 영역)에 변화가 있는 줄만 남긴다 — 작업 트리 수정(' M')과 추적되지 않은 파일('??')은 뺀다
+        status = "".join(line for line in status.splitlines(keepends=True) if line[:1] not in (" ", "?"))
     changed, untracked = _parse_status(status)
 
     if staged:
